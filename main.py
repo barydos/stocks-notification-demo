@@ -1,22 +1,44 @@
 import requests
 import datetime as dt
 import os
+from twilio.rest import Client
 
 from dotenv import load_dotenv
 load_dotenv()
 
+# Stock data
 ALPHA_API_KEY = os.getenv('ALPHA_API_KEY')
+STOCK_ENDPOINT = "https://www.alphavantage.co/query"
+
+# News data
+NEWS_API_KEY = os.getenv('NEWS_API_KEY')
+NEWS_ENDPOINT = "https://newsapi.org/v2/everything"
+
+# SMS client & data
+TWILIO_ACCOUNT_SID= os.getenv('TWILIO_ACCOUNT_SID')
+TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
+TWILIO_PHONE_NUM = os.getenv('TWILIO_PHONE_NUM')
+TO_NUM = os.getenv('PERSONAL_NUM')
+
+# Stock to analyse
 STOCK = "TSLA"
 COMPANY_NAME = "Tesla Inc"
 
+# Other
+NUM_ARTICLES = 1
+
 
 def main():
-    if abs(latest_change(STOCK)) >= 5:
-        get_news(COMPANY_NAME)
+    change = latest_change(STOCK)
+
+    if abs(change) >= 5 or True:
+        articles = get_news(COMPANY_NAME, change, NUM_ARTICLES)
+        send_sms(articles)
+    else:
+        print("Less than 5% change")
 
 
 def latest_change(stock):
-    stock_url = "https://www.alphavantage.co/query"
     stock_params = {
         "function": "TIME_SERIES_DAILY_ADJUSTED",
         "symbol": stock,
@@ -24,7 +46,7 @@ def latest_change(stock):
         "apikey": ALPHA_API_KEY
     }
 
-    response = requests.get(stock_url, stock_params).json()
+    response = requests.get(STOCK_ENDPOINT, stock_params).json()
     results = response['Time Series (Daily)']
 
     last_date = list(results.keys())[0]
@@ -36,39 +58,44 @@ def latest_change(stock):
 
     delta_pct = (1 - last_adjusted_close / previous_adjusted_close) * 100
 
-    return delta_pct
+    return round(delta_pct, 2)
 
 
-def get_news(company: str):
-    print(company)
+def get_news(company: str, change: float, num_articles: int):
+
+    if change > 0:
+        up_down = "🔺"
+    else:
+        up_down = "🔻"
+
+    news_params = {
+        "qInTitle": company
+    }
+
+    headers = {
+        "X-Api-Key": NEWS_API_KEY
+    }
+
+    response = requests.get(url=NEWS_ENDPOINT, params=news_params, headers=headers).json()
+    top_articles = [f"{STOCK}: {up_down} {change}%\nHeadline: {result['title']}\nBrief: {result['description']}" for result in response['articles'][:num_articles]]
+
+    return top_articles
 
 
-def send_sms():
-    pass
+def send_sms(articles):
+
+    client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+    for article in articles:
+        message = client.messages \
+            .create(
+            body=article,
+            from_=TWILIO_PHONE_NUM,
+            to=TO_NUM
+        )
+
+    print(f"Twilio SMS status: {message.status}")
 
 
 if __name__ == '__main__':
     main()
-
-
-# - + - + DONE + - + -
-# STEP 1: Use https://www.alphavantage.co
-# When STOCK price increase/decreases by 5% between yesterday and the day before yesterday then print("Get News").
-
-## STEP 2: Use https://newsapi.org
-# Instead of printing ("Get News"), actually get the first 3 news pieces for the COMPANY_NAME.
-
-## STEP 3: Use https://www.twilio.com
-# Send a seperate message with the percentage change and each article's title and description to your phone number.
-
-
-#Optional: Format the SMS message like this:
-"""
-TSLA: 🔺2%
-Headline: Were Hedge Funds Right About Piling Into Tesla Inc. (TSLA)?. 
-Brief: We at Insider Monkey have gone over 821 13F filings that hedge funds and prominent investors are required to file by the SEC The 13F filings show the funds' and investors' portfolio positions as of March 31st, near the height of the coronavirus market crash.
-or
-"TSLA: 🔻5%
-Headline: Were Hedge Funds Right About Piling Into Tesla Inc. (TSLA)?. 
-Brief: We at Insider Monkey have gone over 821 13F filings that hedge funds and prominent investors are required to file by the SEC The 13F filings show the funds' and investors' portfolio positions as of March 31st, near the height of the coronavirus market crash.
-"""
